@@ -132,25 +132,34 @@ margin:10px;
 # GLOBAL SESSION
 # =====================================================
 
+# GLOBAL SESSION
+
 CURRENT_USER = None
-CURRENT_QUESTION = None
+
+CURRENT_QUESTIONS = []
+CURRENT_INDEX = 0
 
 # =====================================================
 # OPENROUTER
 # =====================================================
 
-def generate_ai_question(topic):
+import requests
+import json
+
+def generate_ai_questions(topic, count=5):
 
     prompt = f"""
-Generate ONE multiple choice question on {topic}.
+Generate {count} multiple choice questions on {topic}.
 
-Return ONLY JSON.
+Return ONLY JSON array.
 
-{{
- "question":"...",
- "options":["A","B","C","D"],
- "answer":"..."
-}}
+[
+  {{
+    "question":"...",
+    "options":["A","B","C","D"],
+    "answer":"..."
+  }}
+]
 """
 
     response = requests.post(
@@ -170,15 +179,14 @@ Return ONLY JSON.
         }
     )
 
-    data = response.json()
+    result = response.json()
 
-    content = data["choices"][0]["message"]["content"]
+    content = result["choices"][0]["message"]["content"]
 
     content = content.replace("```json", "")
     content = content.replace("```", "")
 
     return json.loads(content)
-
 # =====================================================
 # HOME
 # =====================================================
@@ -268,25 +276,32 @@ def topic_page():
 @app.post("/generate", response_class=HTMLResponse)
 def generate(topic: str = Form(...)):
 
-    global CURRENT_QUESTION
+    global CURRENT_QUESTIONS
+    global CURRENT_INDEX
 
-    q = generate_ai_question(topic)
+    questions = generate_ai_questions(topic, 5)
+
+    CURRENT_QUESTIONS = questions
+    CURRENT_INDEX = 0
 
     db = SessionLocal()
 
-    question = Question(
-        question=q["question"],
-        option1=q["options"][0],
-        option2=q["options"][1],
-        option3=q["options"][2],
-        option4=q["options"][3],
-        answer=q["answer"]
-    )
+    for q in questions:
 
-    db.add(question)
+        db.add(
+            Question(
+                question=q["question"],
+                option1=q["options"][0],
+                option2=q["options"][1],
+                option3=q["options"][2],
+                option4=q["options"][3],
+                answer=q["answer"]
+            )
+        )
+
     db.commit()
 
-    CURRENT_QUESTION = q
+    q = CURRENT_QUESTIONS[CURRENT_INDEX]
 
     content = f"""
     <h2>{q['question']}</h2>
@@ -313,67 +328,105 @@ def generate(topic: str = Form(...)):
     """
 
     return Template(HTML).render(content=content)
+    
 
 # =====================================================
 # ANSWER
 # =====================================================
-
 @app.post("/answer", response_class=HTMLResponse)
 def answer(answer: str = Form(...)):
 
+    global CURRENT_INDEX
+    global CURRENT_QUESTIONS
     global CURRENT_USER
-    global CURRENT_QUESTION
 
     db = SessionLocal()
 
-    user = db.query(User).filter(
-        User.username == CURRENT_USER
-    ).first()
-
-    correct = (
-        answer ==
-        CURRENT_QUESTION["answer"]
+    user = (
+        db.query(User)
+        .filter(User.username == CURRENT_USER)
+        .first()
     )
 
+    if CURRENT_INDEX >= len(CURRENT_QUESTIONS):
+        return HTMLResponse("<h1>Quiz Finished</h1>")
+
+    q = CURRENT_QUESTIONS[CURRENT_INDEX]
+
+    # Case-insensitive comparison
+    correct = (
+        answer.strip().lower()
+        ==
+        q["answer"].strip().lower()
+    )
+
+    # Update score
     if correct:
         user.total_score += 10
         db.commit()
 
-    result = (
-        "Correct ✅"
-        if correct
-        else "Wrong ❌"
-    )
+    feedback = "✅ Correct! +10 XP" if correct else "❌ Wrong!"
+
+    CURRENT_INDEX += 1
+
+    # Quiz Finished
+    if CURRENT_INDEX >= len(CURRENT_QUESTIONS):
+
+        content = f"""
+        <h1>🎉 Quiz Finished</h1>
+
+        <h2>{feedback}</h2>
+
+        <h3>Final Score: {user.total_score}</h3>
+
+        <a href="/leaderboard">
+            <button>View Leaderboard</button>
+        </a>
+
+        <br><br>
+
+        <a href="/topic">
+            <button>Play Again</button>
+        </a>
+        """
+
+        return HTMLResponse(
+            content=Template(HTML).render(content=content)
+        )
+
+    next_q = CURRENT_QUESTIONS[CURRENT_INDEX]
 
     content = f"""
-    <h2>{result}</h2>
+    <h3>{feedback}</h3>
 
-    <p>
-        Correct Answer:
-        {CURRENT_QUESTION["answer"]}
-    </p>
+    <h3>Current Score: {user.total_score}</h3>
 
-    <p>
-        Your Score:
-        {user.total_score}
-    </p>
+    <h2>{next_q['question']}</h2>
 
-    <a href="/topic">
-        <button>
-            Next Question
+    <form action="/answer" method="post">
+
+        <button name="answer" value="{next_q['options'][0]}">
+            {next_q['options'][0]}
         </button>
-    </a>
 
-    <br><br>
-
-    <a href="/leaderboard">
-        <button>
-            Leaderboard
+        <button name="answer" value="{next_q['options'][1]}">
+            {next_q['options'][1]}
         </button>
-    </a>
+
+        <button name="answer" value="{next_q['options'][2]}">
+            {next_q['options'][2]}
+        </button>
+
+        <button name="answer" value="{next_q['options'][3]}">
+            {next_q['options'][3]}
+        </button>
+
+    </form>
     """
 
-    return Template(HTML).render(content=content)
+    return HTMLResponse(
+        content=Template(HTML).render(content=content)
+    )
 
 # =====================================================
 # LEADERBOARD
