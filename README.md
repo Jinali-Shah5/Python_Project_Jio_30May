@@ -5,6 +5,7 @@ which need to be answered and there are ten points for each question.
 On every wrong answer, you are awarded zero points.
 At the end of the quiz, your score would be added on leaderboard and
 rankings would be given to you based on your performance.
+The username, scores are all persisted in the database 
 
 You can restart the quiz also and change topics too.
 
